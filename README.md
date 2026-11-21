@@ -42,7 +42,7 @@ The repository contains two standalone Python modules:
 - Python 3.9 or later
 - Apache Spark with PySpark
 - Delta Lake
-- Java 8 or 11 for local Spark execution
+- Compatible Java 8 or 11 or later version for local Spark execution
 - Optional: `pytest` and `chispa` for generated test suites
 
 Install the Python dependencies:
