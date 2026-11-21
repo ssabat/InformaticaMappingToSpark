@@ -249,81 +249,117 @@ def execute_mapping_scd2(spark: SparkSession, cfg: dict):
     print(f"\n--- Executing Mapping: {cfg['mapping_name']} ---")
     df = spark.read.table(cfg["source_table"])
 
-    # Existing filter, lookup, expression, merge, and print logic goes here.
-# 1. Apply Informatica Filter Transformations
-  for f_cond in cfg["filters"]:
-  print(f"Applying Filter: {f_cond}")
-  df = df.filter(F.expr(f_cond))
-# 2. Apply Informatica Lookup Transformations (Broadcast Join)
-  for lkp in cfg["lookups"]:
-  print(f"Applying Lookup: {lkp['table']} ON {lkp['src_key']} = {lkp['lkp_key']}")
-  lkp_df = spark.read.table(lkp["table"]).select(lkp["lkp_key"], *lkp["output_cols"])
-  df = df.join(
-  F.broadcast(lkp_df),
-  df[lkp["src_key"]] == lkp_df[lkp["lkp_key"]],
-  how="left"
-  ).drop(lkp_df[lkp["lkp_key"]])
-# 3. Apply Informatica Expression Transformations
-  for col_name, spark_sql_expr in cfg["expressions"].items():
-  print(f"Applying Expression: {col_name} = {spark_sql_expr}")
-  df = df.withColumn(col_name, F.expr(spark_sql_expr))
-# 4. Compute SCD2 MD5 Row Hash over Tracked Attributes
-  business_keys = cfg["business_keys"]
-  tracked_cols = cfg["tracked_cols"]
-  all_target_data_cols = business_keys + tracked_cols
-  src_df = df.select(*all_target_data_cols).withColumn(
-  "row_hash",
-  F.md5(
-  F.concat_ws(
-  "||",
-  *[F.coalesce(F.col(c).cast("string"), F.lit("NULL")) for c in tracked_cols]
-  )
-  )
-  )
-# 5. Perform Atomic Delta Lake SCD Type 2 Merge
-  target_delta = DeltaTable.forName(spark, cfg["target_table"])
-  active_target_df = target_delta.toDF().filter(F.col("is_current") == True)
-  joined_df = src_df.alias("src").join(
-  active_target_df.alias("tgt"),
-  on=business_keys,
-  how="left"
-  )
-  staged_updates_df = joined_df.filter(
-  F.col("tgt.row_hash").isNull() | (F.col("src.row_hash") != F.col("tgt.row_hash"))
-  ).select("src.*")
-  concat_bk_expr = F.concat_ws("||", *[F.col(k).cast("string") for k in business_keys])
-  rows_to_insert = staged_updates_df.withColumn("merge_key", F.lit(None).cast("string"))
-  rows_to_expire = (
-  joined_df.filter(
-  F.col("tgt.row_hash").isNotNull() & (F.col("src.row_hash") != F.col("tgt.row_hash"))
-  )
-  .select("src.*")
-  .withColumn("merge_key", concat_bk_expr)
-  )
-  final_staged_df = rows_to_insert.unionByName(rows_to_expire)
-  tgt_bk_expr = "CONCAT_WS('||', " + ", ".join([f"CAST(tgt.{k} AS STRING)" for k in business_keys]) + ")"
-  merge_condition = f"{tgt_bk_expr} = stg.merge_key AND tgt.is_current = true"
-  current_ts = F.current_timestamp()
-  insert_values = {col: f"stg.{col}" for col in all_target_data_cols}
-  insert_values.update({
-  "row_hash": "stg.row_hash",
-  "is_current": F.lit(True),
-  "effective_start_date": current_ts,
-  "effective_end_date": F.lit("9999-12-31 23:59:59").cast("timestamp")
-  })
-  (
-  target_delta.alias("tgt")
-  .merge(final_staged_df.alias("stg"), merge_condition)
-  .whenMatchedUpdate(
-  set={
-  "is_current": F.lit(False),
-  "effective_end_date": current_ts
-  }
-  )
-  .whenNotMatchedInsert(values=insert_values)
-  .execute()
-  )
-print(f"Completed SCD2 Merge for {cfg['target_table']}")
+    # 1. Apply Informatica Filter Transformations
+    for f_cond in cfg["filters"]:
+        print(f"Applying Filter: {f_cond}")
+        df = df.filter(F.expr(f_cond))
+
+    # 2. Apply Informatica Lookup Transformations
+    for lkp in cfg["lookups"]:
+        print(
+            f"Applying Lookup: {lkp['table']} "
+            f"ON {lkp['src_key']} = {lkp['lkp_key']}"
+        )
+        lkp_df = (
+            spark.read.table(lkp["table"])
+            .select(lkp["lkp_key"], *lkp["output_cols"])
+        )
+        df = (
+            df.join(
+                F.broadcast(lkp_df),
+                df[lkp["src_key"]] == lkp_df[lkp["lkp_key"]],
+                how="left",
+            )
+            .drop(lkp_df[lkp["lkp_key"]])
+        )
+
+    # 3. Apply Expression Transformations
+    for col_name, spark_sql_expr in cfg["expressions"].items():
+        print(f"Applying Expression: {col_name} = {spark_sql_expr}")
+        df = df.withColumn(col_name, F.expr(spark_sql_expr))
+
+    business_keys = cfg["business_keys"]
+    tracked_cols = cfg["tracked_cols"]
+    all_target_data_cols = business_keys + tracked_cols
+
+    src_df = df.select(*all_target_data_cols).withColumn(
+        "row_hash",
+        F.md5(
+            F.concat_ws(
+                "||",
+                *[
+                    F.coalesce(F.col(c).cast("string"), F.lit("NULL"))
+                    for c in tracked_cols
+                ],
+            )
+        ),
+    )
+
+    target_delta = DeltaTable.forName(spark, cfg["target_table"])
+    active_target_df = target_delta.toDF().filter(F.col("is_current") == True)
+
+    joined_df = src_df.alias("src").join(
+        active_target_df.alias("tgt"),
+        on=business_keys,
+        how="left",
+    )
+
+    staged_updates_df = joined_df.filter(
+        F.col("tgt.row_hash").isNull()
+        | (F.col("src.row_hash") != F.col("tgt.row_hash"))
+    ).select("src.*")
+
+    concat_bk_expr = F.concat_ws(
+        "||",
+        *[F.col(k).cast("string") for k in business_keys],
+    )
+    rows_to_insert = staged_updates_df.withColumn(
+        "merge_key", F.lit(None).cast("string")
+    )
+    rows_to_expire = (
+        joined_df.filter(
+            F.col("tgt.row_hash").isNotNull()
+            & (F.col("src.row_hash") != F.col("tgt.row_hash"))
+        )
+        .select("src.*")
+        .withColumn("merge_key", concat_bk_expr)
+    )
+
+    final_staged_df = rows_to_insert.unionByName(rows_to_expire)
+    tgt_bk_expr = "CONCAT_WS('||', " + ", ".join(
+        f"CAST(tgt.{k} AS STRING)" for k in business_keys
+    ) + ")"
+    merge_condition = (
+        f"{tgt_bk_expr} = stg.merge_key AND tgt.is_current = true"
+    )
+    current_ts = F.current_timestamp()
+
+    insert_values = {
+        col: f"stg.{col}" for col in all_target_data_cols
+    }
+    insert_values.update({
+        "row_hash": "stg.row_hash",
+        "is_current": F.lit(True),
+        "effective_start_date": current_ts,
+        "effective_end_date": (
+            F.lit("9999-12-31 23:59:59").cast("timestamp")
+        ),
+    })
+
+    (
+        target_delta.alias("tgt")
+        .merge(final_staged_df.alias("stg"), merge_condition)
+        .whenMatchedUpdate(
+            set={
+                "is_current": F.lit(False),
+                "effective_end_date": current_ts,
+            }
+        )
+        .whenNotMatchedInsert(values=insert_values)
+        .execute()
+    )
+
+    print(f"Completed SCD2 Merge for {cfg['target_table']}")
 
 if __name__ == "__main__":
     spark = (
@@ -331,7 +367,6 @@ if __name__ == "__main__":
         .appName("Infa_Complex_XML_To_PySpark")
         .getOrCreate()
     )
-
     all_mappings = parse_all_mappings_from_xml(SAMPLE_COMPLEX_INFA_XML)
 
     for mapping_cfg in all_mappings:
