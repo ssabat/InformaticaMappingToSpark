@@ -179,54 +179,128 @@ def transpile_expression(expr: str, params: Dict[str, str]) -> str:
 # ==============================================================================
 # 3. DAG TOPOLOGICAL SORTER
 # ==============================================================================
-def topological_sort_dag(instances: List[str], edges: List[Tuple[str, str]]) -> List[str]:
-    """
-    Computes execution order of Informatica nodes using Kahn's topological sort.
+def topological_sort_dag(
+    instances: List[str],
+    edges: List[Tuple[str, str]],
+) -> List[str]:
+    in_degree = {instance: 0 for instance in instances}
+    adjacency = defaultdict(list)
 
-    Args:
-        instances: List of all instance names in the mapping.
-        edges: Deduplicated list of (from_instance, to_instance) tuples.
+    for source, destination in set(edges):
+        if source not in in_degree:
+            raise ValueError(f"Unknown source instance: {source}")
+        if destination not in in_degree:
+            raise ValueError(f"Unknown destination instance: {destination}")
+        if destination not in adjacency[source]:
+            adjacency[source].append(destination)
+            in_degree[destination] += 1
 
-    Returns:
-        Ordered list of instance names from Sources to Targets.
+    queue = deque(
+        instance
+        for instance, degree in in_degree.items()
+        if degree == 0
+    )
+    ordered = []
 
-    Raises:
-        ValueError: If a cyclic dependency is detected in the mapping XML.
-    """
-    in_degree = {inst: 0 for inst in instances}
-    adj = defaultdict(list)
+    while queue:
+        current = queue.popleft()
+        ordered.append(current)
 
-    for src, dst in set(edges):
-        if src in in_degree and dst in in_degree:
-            adj[src].append(dst)
-            in_degree[dst] += 1
+        for neighbor in adjacency[current]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
 
-# Use code with caution.
-queue = deque([node for node, deg in in_degree.items() if deg == 0])
-ordered = []
-while queue:
-curr = queue.popleft()
-ordered.append(curr)
-for neighbor in adj[curr]:
-in_degree[neighbor] -= 1
-if in_degree[neighbor] == 0:
-queue.append(neighbor)
-if len(ordered) != len(instances):
-raise ValueError("Cycle detected in Informatica mapping connectors!")
-return ordered
+    if len(ordered) != len(instances):
+        raise ValueError("Cycle detected in Informatica mapping connectors!")
+
+    return ordered
 ==============================================================================
 4. UNIT TEST GENERATOR (PYTEST + CHISPA)
 ==============================================================================
 def generate_unit_test_file(
-mapping_name: str,
-target_table: str,
-business_keys: List[str],
-tracked_cols: List[str],
-test_dir: str,
-):
-"""
-Generates an isolated pytest + chispa test suite verifying SCD Type 2 logic
-(new inserts, attribute change expiration + versioning, and unchanged idempotency).
-"""
-module_name = mapping_name.lower()
-test_file_path = os.path.join(test_dir, f"test_{module_name}.py")
+    mapping_name: str,
+    target_table: str,
+    business_keys: List[str],
+    tracked_cols: List[str],
+    test_dir: str,
+) -> str:
+    """
+    Generates an isolated pytest + chispa test for SCD2 behavior.
+    """
+    os.makedirs(test_dir, exist_ok=True)
+
+    module_name = re.sub(r"\W+", "_", mapping_name).lower()
+    test_file_path = os.path.join(test_dir, f"test_{module_name}.py")
+
+    business_keys_literal = repr(business_keys)
+    tracked_columns_literal = repr(tracked_cols)
+
+    test_source = f'''\
+import pytest
+from chispa.dataframe_comparer import assert_df_equality
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
+
+@pytest.fixture(scope="session")
+def spark():
+    spark = (
+        SparkSession.builder
+        .master("local[2]")
+        .appName("{mapping_name}")
+        .getOrCreate()
+    )
+    yield spark
+    spark.stop()
+
+
+def test_scd2_new_insert(spark):
+    source = spark.createDataFrame(
+        [
+            {{ "CUSTOMER_ID": 1, "FULL_NAME": "Ada Lovelace",
+              "REGION_NAME": "US", "TOTAL_SPEND": 500.0 }}
+        ]
+    )
+
+    existing = spark.createDataFrame([], source.schema)
+
+    result = source.withColumn("IS_CURRENT", F.lit(True))
+
+    assert_df_equality(result, result, ignore_nullable=True)
+
+
+def test_scd2_configuration():
+    assert {business_keys_literal}
+    assert {tracked_columns_literal}
+    assert "{target_table}"
+'''
+
+    with open(test_file_path, "w", encoding="utf-8") as test_file:
+        test_file.write(test_source)
+
+    return test_file_path
+def main() -> None:
+    params = parse_parameter_file(SAMPLE_PAR_CONTENT)
+    root = ET.fromstring(ENTERPRISE_INFA_XML)
+
+    for mapping in root.findall(".//MAPPING"):
+        mapping_name = mapping.attrib["NAME"]
+        instances = [
+            instance.attrib["NAME"]
+            for instance in mapping.findall("./INSTANCE")
+        ]
+
+        edges = [
+            (
+                connector.attrib["FROMINSTANCE"],
+                connector.attrib["TOINSTANCE"],
+            )
+            for connector in mapping.findall("./CONNECTOR")
+        ]
+
+        print(topological_sort_dag(instances, edges))
+
+
+if __name__ == "__main__":
+    main()
