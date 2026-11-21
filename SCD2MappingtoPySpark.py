@@ -234,9 +234,9 @@ parsed_mappings.append({
 "expressions": expressions,
 })
 return parsed_mappings
-==============================================================================
-4. DYNAMIC PYSPARK PIPELINE + SCD2 EXECUTOR
-==============================================================================
+# ==============================================================================
+# 4. DYNAMIC PYSPARK PIPELINE + SCD2 EXECUTOR
+# ==============================================================================
 def execute_mapping_scd2(spark: SparkSession, cfg: dict):
 print(f"\n--- Executing Mapping: {cfg['mapping_name']} ---")
 df = spark.read.table(cfg["source_table"])
