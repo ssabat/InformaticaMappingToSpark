@@ -241,8 +241,10 @@ def parse_all_mappings_from_xml(xml_content: str) -> list[dict]:
 # 4. DYNAMIC PYSPARK PIPELINE + SCD2 EXECUTOR
 # ==============================================================================
 def execute_mapping_scd2(spark: SparkSession, cfg: dict):
-print(f"\n--- Executing Mapping: {cfg['mapping_name']} ---")
-df = spark.read.table(cfg["source_table"])
+    print(f"\n--- Executing Mapping: {cfg['mapping_name']} ---")
+    df = spark.read.table(cfg["source_table"])
+
+    # Existing filter, lookup, expression, merge, and print logic goes here.
 # 1. Apply Informatica Filter Transformations
 for f_cond in cfg["filters"]:
 print(f"Applying Filter: {f_cond}")
@@ -317,9 +319,14 @@ set={
 .execute()
 )
 print(f"Completed SCD2 Merge for {cfg['target_table']}")
-if name == "main":
-spark = SparkSession.builder.appName("Infa_Complex_XML_To_PySpark").getOrCreate()
-# Parse all mappings in the XML export and run them sequentially
-all_mappings = parse_all_mappings_from_xml(SAMPLE_COMPLEX_INFA_XML)
-for mapping_cfg in all_mappings:
-execute_mapping_scd2(spark, mapping_cfg)
+if __name__ == "__main__":
+    spark = (
+        SparkSession.builder
+        .appName("Infa_Complex_XML_To_PySpark")
+        .getOrCreate()
+    )
+
+    all_mappings = parse_all_mappings_from_xml(SAMPLE_COMPLEX_INFA_XML)
+
+    for mapping_cfg in all_mappings:
+        execute_mapping_scd2(spark, mapping_cfg)
