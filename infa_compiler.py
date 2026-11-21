@@ -201,7 +201,7 @@ def topological_sort_dag(instances: List[str], edges: List[Tuple[str, str]]) -> 
             adj[src].append(dst)
             in_degree[dst] += 1
 
-Use code with caution.
+# Use code with caution.
 queue = deque([node for node, deg in in_degree.items() if deg == 0])
 ordered = []
 while queue:
