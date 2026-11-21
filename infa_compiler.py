@@ -215,9 +215,9 @@ def topological_sort_dag(
         raise ValueError("Cycle detected in Informatica mapping connectors!")
 
     return ordered
-==============================================================================
-4. UNIT TEST GENERATOR (PYTEST + CHISPA)
-==============================================================================
+# ==============================================================================
+# 4. UNIT TEST GENERATOR (PYTEST + CHISPA)
+# ==============================================================================
 def generate_unit_test_file(
     mapping_name: str,
     target_table: str,
