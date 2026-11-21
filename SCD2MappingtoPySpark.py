@@ -216,24 +216,27 @@ def parse_all_mappings_from_xml(xml_content: str) -> list[dict]:
                 if raw_expr and "md5" not in col_name:
                     expressions[col_name] = translate_infa_expression(raw_expr)
 
-        # Determine SCD2 tracked columns (Target columns minus Business Keys & Audit fields)
-        audit_cols = {"row_hash", "is_current", "effective_start_date", "effective_end_date"}
         tracked_cols = [
-            c for c in tgt_info["columns"]
-# Use code with caution.
-if c not in src_info["business_keys"] and c not in audit_cols and not c.endswith("_sk")
-]
-parsed_mappings.append({
-"mapping_name": mapping_name,
-"source_table": src_info["table"],
-"target_table": tgt_info["table"],
-"business_keys": src_info["business_keys"],
-"tracked_cols": tracked_cols,
-"filters": filters,
-"lookups": lookups,
-"expressions": expressions,
-})
-return parsed_mappings
+            c
+            for c in tgt_info["columns"]
+            if c not in src_info["business_keys"]
+            and c not in audit_cols
+            and not c.endswith("_sk")
+        ]
+
+        parsed_mappings.append({
+            "mapping_name": mapping_name,
+            "source_table": src_info["table"],
+            "target_table": tgt_info["table"],
+            "business_keys": src_info["business_keys"],
+            "tracked_cols": tracked_cols,
+            "filters": filters,
+            "lookups": lookups,
+            "expressions": expressions,
+        })
+
+    return parsed_mappings  
+
 # ==============================================================================
 # 4. DYNAMIC PYSPARK PIPELINE + SCD2 EXECUTOR
 # ==============================================================================
